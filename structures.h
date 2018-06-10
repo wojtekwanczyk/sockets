@@ -25,4 +25,17 @@ typedef struct client {
     uint8_t un_active;
 } client;
 
+
+typedef struct operation {
+    int nr;
+    char op;
+    double a;
+    double b;
+} operation;
+
+typedef struct result {
+    int nr;
+    double val;
+} result;
+
 #endif //ZAD1_STRUCTURES_H

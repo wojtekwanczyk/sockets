@@ -37,6 +37,7 @@ void *ping_task(void *arg);
 void *console_task(void *arg);
 void remove_socket(int nr);
 void remove_client(int nr);
+int name_compare(char *name, client *c);
 
 
 
@@ -77,11 +78,66 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    struct epoll_event e;
+    while(1){
+        if(epoll_wait(epoll, &e, 1, -1)){
+            printf("Error while waiting for epoll\n");
+            exit(1);
+        }
+
+    }
+
     return 0;
 }
 
 
+void *console_task(void *arg){
+    operation msg;
+    uint8_t mt = REQUEST;
+    int er;
+    char buf[256];
+    srand((unsigned int)time(NULL));
+    while(1){
+        printf("Write command:\n");
 
+        if(fgets(buf, sizeof(buf), stdin) == NULL){
+            printf("Error while reading fgets\n");
+        }
+
+        if(sscanf(buf, "%lf %c %lf", &msg.a, &msg.op, &msg.b) != 3){
+            printf("Wrong format. Try again\n");
+            continue;
+        }
+        operation_nr++;
+        msg.nr = operation_nr;
+        pthread_mutex_lock(&clients_mutex);
+        if(client_nr == 0){
+            printf("Client list is empty. Wait for clients and try again\n");
+            pthread_mutex_unlock(&clients_mutex);
+            continue;
+        }
+        er = 0;
+        int x = rand() % client_nr;
+        if(write(clients[x].fd, &mt, 1) != 1) er = 1;
+        if(write(clients[x].fd, &msg, sizeof(operation)) != sizeof(operation)) er = 1;
+
+        if(er == 1){
+            printf("Error while sending request to the client \'%s\'\n", clients[x].name);
+        } else {
+            printf("Command request nr %d sent successfully to client \'%s\'\n",operation_nr, clients[x].name);
+        }
+        pthread_mutex_unlock(&clients_mutex);
+    }
+}
+
+int is_in(void *const a, void *const base, size_t nr, size_t size, __compar_fn_t fun_cmp) {
+    char *p = (char*) base;
+    if (nr > 0) {
+        for (int i = 0; i < nr; ++i)
+            if ((*fun_cmp)(a, (void *) (p + i * size)) == 0) return i;
+    }
+    return -1;
+}
 
 void connect_client(char *name, int socket){
     uint8_t mt;
@@ -94,8 +150,41 @@ void connect_client(char *name, int socket){
         }
         remove_socket(socket);
     } else {
-        
+        int already_in = is_in(name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
+        if(already_in != -1){
+            mt = BADNAME;
+            if(write(socket, &mt, 1) != 1){
+                printf("Error while writing BADNAME message to client\n");
+                exit(1);
+            }
+        } else {
+            clients[client_nr].fd = socket;
+            clients[client_nr].name = malloc(strlen(name) + 1);
+            clients[client_nr].un_active = 0;
+            strcpy(clients[client_nr].name, name);
+            client_nr++;
+            mt = SUCCESS;
+            if(write(socket, &mt, 1) != 1){
+                printf("Error while writing SUCCESS message to client\n");
+                exit(1);
+            }
+        }
     }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+void disconnect_client(char *name){
+    pthread_mutex_lock(&clients_mutex);
+    int i = is_in(name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
+    if(i >= 0){
+        remove_client(i);
+        printf("Client /'%s/' has been disconnected\n", name);
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+int name_compare(char *name, client *c){
+    return strcmp(name, c->name);
 }
 
 
@@ -104,6 +193,7 @@ void *ping_task(void *arg){
     uint8_t mtype = PING;
     while(1){
         pthread_mutex_lock(&clients_mutex);
+
         for(int i = 0; i < client_nr; i++){
             if(write(clients[i].fd, &mtype, 1) != 1){
                 printf("Unable to ping %s. Client will be disconnected\n");
@@ -112,7 +202,7 @@ void *ping_task(void *arg){
             }
         }
         pthread_mutex_unlock(&clients_mutex);
-        sleep(2);
+        sleep(5);
     }
 }
 
@@ -142,10 +232,7 @@ void remove_socket(int nr){
     }
 }
 
-void *console_task(void *arg){
 
-    return NULL;
-}
 
 void open_sockets(){
     // WEB SOCKET
