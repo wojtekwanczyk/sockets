@@ -272,7 +272,9 @@ void *ping_task(void *arg){
     }
 
 
-    
+
+
+
 }
 
 void remove_client(int nr){
