@@ -173,7 +173,7 @@ void get_message(int socket){
         case PING:
             pthread_mutex_lock(&clients_mutex);
             int nr = is_in(name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
-            if(nr >= 0) clients[nr].un_active--;
+            if(nr >= 0) clients[nr].active = 1;
             pthread_mutex_unlock(&clients_mutex);
             break;
         case RESULT:{
@@ -226,7 +226,7 @@ void connect_client(char *name, int socket){
         } else {
             clients[client_nr].fd = socket;
             clients[client_nr].name = malloc(strlen(name) + 1);
-            clients[client_nr].un_active = 0;
+            clients[client_nr].active = 1;
             strcpy(clients[client_nr].name, name);
             client_nr++;
             mt = SUCCESS;
@@ -262,7 +262,7 @@ void *ping_task(void *arg){
 
         for(int i = 0; i < client_nr; i++){
             if(write(clients[i].fd, &mtype, 1) != 1){
-                printf("Unable to ping %s. Client will be disconnected\n");
+                printf("Unable to ping %s. Client will be disconnected\n", clients[i].name);
                 remove_client(i);
                 i--;
             }
