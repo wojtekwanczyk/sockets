@@ -21,7 +21,7 @@ typedef enum message_t {
 typedef struct client {
     int fd;
     char *name;
-    uint8_t active;
+    uint8_t not_active;
 } client;
 
 

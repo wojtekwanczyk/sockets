@@ -39,6 +39,8 @@ int name_compare(char *name, client *c);
 int is_in(void *const a, void *const base, size_t nr, size_t size, __compar_fn_t fun_cmp);
 void connect_client(char *name, int socket);
 void disconnect_client(char *name);
+void get_message(int socket);
+void get_connection(int socket);
 
 
 int main(int argc, char *argv[]) {
@@ -79,11 +81,19 @@ int main(int argc, char *argv[]) {
     }
 
     struct epoll_event e;
+    int i=0;
     while(1){
-        if(epoll_wait(epoll, &e, 1, -1)){
+        if(epoll_wait(epoll, &e, 1, -1) == -1){
             printf("Error while waiting for epoll\n");
             exit(1);
         }
+
+        if(e.data.fd < 0){
+            get_connection(-e.data.fd);
+        } else {
+            get_message(e.data.fd);
+        }
+        i++;
 
     }
 
@@ -158,7 +168,7 @@ void get_message(int socket){
         exit(1);
     }
 
-    if(read(socket, &ms, 1) != 1){
+    if(read(socket, &ms, 2) != 2){
         printf("Error while reading message size\n");
         exit(1);
     }
@@ -173,7 +183,7 @@ void get_message(int socket){
         case PING:
             pthread_mutex_lock(&clients_mutex);
             int nr = is_in(name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
-            if(nr >= 0) clients[nr].active = 1;
+            if(nr >= 0) clients[nr].not_active--;
             pthread_mutex_unlock(&clients_mutex);
             break;
         case RESULT:{
@@ -182,7 +192,7 @@ void get_message(int socket){
                 printf("Error while reading result\n");
                 exit(1);
             }
-            printf("Client \'%s\' gave result: %lf", name, r.val);
+            printf("Client '%s' gave result: %lf\n", name, r.val);
             break;
         }
         case CONNECT:
@@ -191,7 +201,10 @@ void get_message(int socket){
         case DISCONNECT:
             disconnect_client(name);
             break;
+        default:
+            printf("Received unknown message\n");
     }
+    free(name);
 
 }
 
@@ -226,7 +239,7 @@ void connect_client(char *name, int socket){
         } else {
             clients[client_nr].fd = socket;
             clients[client_nr].name = malloc(strlen(name) + 1);
-            clients[client_nr].active = 1;
+            clients[client_nr].not_active = 0;
             strcpy(clients[client_nr].name, name);
             client_nr++;
             mt = SUCCESS;
@@ -261,10 +274,15 @@ void *ping_task(void *arg){
         pthread_mutex_lock(&clients_mutex);
 
         for(int i = 0; i < client_nr; i++){
-            if(write(clients[i].fd, &mtype, 1) != 1){
-                printf("Unable to ping %s. Client will be disconnected\n", clients[i].name);
+            if(clients[i].not_active != 0){
+                printf("Client '%s' is not active and will be removed\n", clients[i].name);
                 remove_client(i);
                 i--;
+            } else {
+                if(write(clients[i].fd, &mtype, 1) != 1){
+                    printf("Unable to ping %s. Client will be disconnected\n", clients[i].name);
+                }
+                clients[i].not_active++;
             }
         }
         pthread_mutex_unlock(&clients_mutex);

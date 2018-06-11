@@ -44,6 +44,7 @@ int main(int argc, char **argv) {
             printf("Error while reading message type\n");
             exit(1);
         }
+
         if(mt == PING){
             printf("Received PING message. Sending back\n");
             send_m(PING);
@@ -71,6 +72,7 @@ void send_m(uint8_t mt){
         printf("Error while sending message with name\n");
         exit(1);
     }
+    printf("Message send!\n");
 }
 
 void request(){
@@ -133,7 +135,7 @@ void open_sockets(char *arg2, char *arg3){
         char *p = strtok(NULL, ":");
         //printf("%s\n", arg3);
         if(p == NULL){
-            "Error - no port given\n";
+            printf("Error - no port given\n");
             exit(1);
         }
 
