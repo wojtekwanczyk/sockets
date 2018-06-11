@@ -9,7 +9,6 @@
 
 typedef enum message_t {
     PING,
-    PONG,
     REQUEST,
     RESULT,
     SUCCESS,
@@ -22,7 +21,7 @@ typedef enum message_t {
 typedef struct client {
     int fd;
     char *name;
-    uint8_t un_active;
+    uint8_t active;
 } client;
 
 
@@ -37,5 +36,9 @@ typedef struct result {
     int nr;
     double val;
 } result;
+
+#define UNIX_PATH_MAX 108
+#define CLIENT_MAX 20
+
 
 #endif //ZAD1_STRUCTURES_H

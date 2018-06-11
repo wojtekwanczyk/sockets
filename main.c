@@ -12,8 +12,6 @@
 #include "structures.h"
 
 
-#define UNIX_PATH_MAX 108
-#define CLIENT_MAX 20
 
 
 char *unix_path;
@@ -38,7 +36,9 @@ void *console_task(void *arg);
 void remove_socket(int nr);
 void remove_client(int nr);
 int name_compare(char *name, client *c);
-
+int is_in(void *const a, void *const base, size_t nr, size_t size, __compar_fn_t fun_cmp);
+void connect_client(char *name, int socket);
+void disconnect_client(char *name);
 
 
 int main(int argc, char *argv[]) {
@@ -129,6 +129,72 @@ void *console_task(void *arg){
         pthread_mutex_unlock(&clients_mutex);
     }
 }
+
+
+void get_connection(int socket) {
+    int client = accept(socket, NULL, NULL);
+    if(client == -1){
+        printf("Error while accepting client\n");
+        exit(1);
+    }
+
+    struct epoll_event e;
+    e.events = EPOLLIN | EPOLLPRI;
+    e.data.fd = client;
+
+    if(epoll_ctl(epoll, EPOLL_CTL_ADD, client, &e)){
+        printf("Error while add new client to epoll\n");
+        exit(1);
+    }
+}
+
+
+void get_message(int socket){
+    uint8_t mt;
+    uint16_t ms;
+
+    if(read(socket, &mt, 1) != 1){
+        printf("Error while reading message type\n");
+        exit(1);
+    }
+
+    if(read(socket, &ms, 1) != 1){
+        printf("Error while reading message size\n");
+        exit(1);
+    }
+    char *name = malloc(ms);
+
+    if(read(socket, name, ms) != ms){
+        printf("Error while reading exact message\n");
+        exit(1);
+    }
+
+    switch(mt){
+        case PING:
+            pthread_mutex_lock(&clients_mutex);
+            int nr = is_in(name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
+            if(nr >= 0) clients[nr].un_active--;
+            pthread_mutex_unlock(&clients_mutex);
+            break;
+        case RESULT:{
+            result r;
+            if(read(socket, &r, sizeof(result)) != sizeof(result)){
+                printf("Error while reading result\n");
+                exit(1);
+            }
+            printf("Client \'%s\' gave result: %lf", name, r.val);
+            break;
+        }
+        case CONNECT:
+            connect_client(name, socket);
+            break;
+        case DISCONNECT:
+            disconnect_client(name);
+            break;
+    }
+
+}
+
 
 int is_in(void *const a, void *const base, size_t nr, size_t size, __compar_fn_t fun_cmp) {
     char *p = (char*) base;
