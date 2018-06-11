@@ -270,6 +270,7 @@ void *ping_task(void *arg){
         pthread_mutex_unlock(&clients_mutex);
         sleep(5);
     }
+    
 }
 
 void remove_client(int nr){
