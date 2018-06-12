@@ -50,10 +50,6 @@ typedef struct operation {
     double b;
 } operation;
 
-typedef struct result {
-    int nr;
-    double val;
-} result;
 
 #define UNIX_PATH_MAX 108
 #define CLIENT_MAX 20

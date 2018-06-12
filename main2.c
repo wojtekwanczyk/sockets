@@ -32,14 +32,12 @@ void open_sockets();
 void close_sockets();
 void *ping_task(void *arg);
 void *console_task(void *arg);
-void remove_socket(int nr);
 void remove_client(int nr);
 int name_compare(char *name, client *c);
 int is_in(void *const a, void *const base, size_t nr, size_t size, __compar_fn_t fun_cmp);
-void connect_client(char *name, int socket);
+void connect_client(int socket, message_t m, struct sockaddr *sa, socklen_t len);
 void disconnect_client(char *name);
 void get_message(int socket);
-void get_connection(int socket);
 
 
 int main(int argc, char *argv[]) {
@@ -136,71 +134,36 @@ void *console_task(void *arg){
     }
 }
 
-
-void get_connection(int socket) {
-    int client = accept(socket, NULL, NULL);
-    if(client == -1){
-        printf("Error while accepting client\n");
-        exit(1);
-    }
-
-    struct epoll_event e;
-    e.events = EPOLLIN | EPOLLPRI;
-    e.data.fd = client;
-
-    if(epoll_ctl(epoll, EPOLL_CTL_ADD, client, &e)){
-        printf("Error while add new client to epoll\n");
-        exit(1);
-    }
-}
-
-// to teraz trzeba sprawdizc!!!
 void get_message(int socket){
-    uint8_t mt;
-    uint16_t ms;
+    message_t m;
+    socklen_t len = sizeof(struct sockaddr);
+    struct sockaddr *sa = malloc(sizeof(struct sockaddr));
 
-    if(read(socket, &mt, 1) != 1){
-        printf("Error while reading message type\n");
+    if(recvfrom(socket, &m, sizeof(message_t), 0, sa, &len) != sizeof(message_t)){
+        printf("Error while reading message\n");
         exit(1);
     }
 
-    if(read(socket, &ms, 2) != 2){
-        printf("Error while reading message size\n");
-        exit(1);
-    }
-    char *name = malloc(ms);
-
-    if(read(socket, name, ms) != ms){
-        printf("Error while reading exact message\n");
-        exit(1);
-    }
-
-    switch(mt){
+    switch(m.mt){
         case PING:
             pthread_mutex_lock(&clients_mutex);
-            int nr = is_in(name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
+            int nr = is_in(m.name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
             if(nr >= 0) clients[nr].not_active--;
             pthread_mutex_unlock(&clients_mutex);
             break;
         case RESULT:{
-            result r;
-            if(read(socket, &r, sizeof(result)) != sizeof(result)){
-                printf("Error while reading result\n");
-                exit(1);
-            }
-            printf("Client '%s' gave result: %lf\n", name, r.val);
+            printf("Client '%s' gave result: %lf\n", m.name, m.val);
             break;
         }
         case CONNECT:
-            connect_client(name, socket);
+            connect_client(socket, m, sa, len);
             break;
         case DISCONNECT:
-            disconnect_client(name);
+            disconnect_client(m.name);
             break;
         default:
             printf("Received unknown message\n");
     }
-    free(name);
 
 }
 
@@ -214,33 +177,37 @@ int is_in(void *const a, void *const base, size_t nr, size_t size, __compar_fn_t
     return -1;
 }
 
-void connect_client(char *name, int socket){
+void connect_client(int socket, message_t m, struct sockaddr *sa, socklen_t len){
     uint8_t mt;
     pthread_mutex_lock(&clients_mutex);
     if(client_nr == CLIENT_MAX){
         mt = FULL;
-        if(write(socket, &mt, 1) != 1){
+        if(sendto(socket, &mt, 1, 0, sa, len) != 1){
             printf("Error while sending FULL message to client\n");
             exit(1);
         }
-        remove_socket(socket);
+        free(sa);
     } else {
-        int already_in = is_in(name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
+        int already_in = is_in(m.name, clients, (size_t)client_nr, sizeof(client), (__compar_fn_t)name_compare);
         if(already_in != -1){
             mt = BADNAME;
-            if(write(socket, &mt, 1) != 1){
+            if(sendto(socket, &mt, 1, 0, sa, len) != 1){
                 printf("Error while writing BADNAME message to client\n");
                 exit(1);
             }
+            free(sa);
         } else {
-            clients[client_nr].fd = socket;
-            clients[client_nr].name = malloc(strlen(name) + 1);
+            clients[client_nr].sockaddr = sa;
+            clients[client_nr].name = malloc(strlen(m.name) + 1);
             clients[client_nr].not_active = 0;
-            strcpy(clients[client_nr].name, name);
+            clients[client_nr].ct = m.ct;
+            clients[client_nr].socklen = len;
+            strcpy(clients[client_nr].name, m.name);
             client_nr++;
             mt = SUCCESS;
-            if(write(socket, &mt, 1) != 1){
+            if(sendto(socket, &mt, 1, 0, sa, len) != 1){
                 printf("Error while writing SUCCESS message to client\n");
+                perror("WHAT");
                 exit(1);
             }
         }
@@ -292,42 +259,23 @@ void *ping_task(void *arg){
 }
 
 void remove_client(int nr){
-    remove_socket(clients[nr].fd);
     free(clients[nr].name);
+    free(clients[nr].sockaddr);
     client_nr--;
     for(int i=nr; i<client_nr; i++){
         clients[i] = clients[i+1];
     }
 }
 
-void remove_socket(int nr){
-    if (epoll_ctl(epoll, EPOLL_CTL_DEL, nr, NULL) == -1){
-        printf("Error while removing client's socket from epoll\n");
-        exit(1);
-    }
-
-    if (shutdown(nr, SHUT_RDWR) == -1) {
-        printf("Error with shutdown of client's socket\n");
-        exit(1);
-    }
-
-    if (close(nr) == -1){
-        printf("Error while closing client's socket\n");
-        exit(1);
-    }
-}
-
-
-
 void open_sockets(){
     // WEB SOCKET
     struct sockaddr_in address_web;
     address_web.sin_family = AF_INET;
-    address_web.sin_addr.s_addr = INADDR_ANY;
+    address_web.sin_addr.s_addr = htonl(INADDR_ANY);
     address_web.sin_port = htons(port_number);
 
-    socket_web = socket(AF_INET, SOCK_STREAM, 0);
-    if(socket_web == -1){
+    socket_web = socket(AF_INET, SOCK_DGRAM, 0);
+    if(socket_web < 0){
         printf("Error while creating web socket\n");
         exit(1);
     }
@@ -337,29 +285,19 @@ void open_sockets(){
         exit(1);
     }
 
-    if(listen(socket_web, CLIENT_MAX)){
-        printf("Error while trying to listen on web socket\n");
-        exit(1);
-    }
-
     // LOCAL SOCKET
     struct sockaddr_un address_local;
     address_local.sun_family = AF_UNIX;
     snprintf(address_local.sun_path, UNIX_PATH_MAX, "%s", unix_path);
 
-    socket_local = socket(AF_UNIX, SOCK_STREAM, 0);
-    if(socket_local == -1){
+    socket_local = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if(socket_local < 0){
         printf("Error while creating local socket\n");
         exit(1);
     }
 
     if(bind(socket_local, (const struct sockaddr*)&address_local, sizeof(address_local))){
         printf("Error while binding local socket\n");
-        exit(1);
-    }
-
-    if(listen(socket_local, CLIENT_MAX)){
-        printf("Error while trying to listen on local socket\n");
         exit(1);
     }
 
@@ -372,18 +310,17 @@ void open_sockets(){
         exit(1);
     }
 
-    event.data.fd = -socket_web;
+    event.data.fd = socket_web;
     if(epoll_ctl(epoll, EPOLL_CTL_ADD, socket_web, &event) == -1){
         printf("Error while adding web socket to epoll\n");
         exit(1);
     }
 
-    event.data.fd = -socket_local;
+    event.data.fd = socket_local;
     if(epoll_ctl(epoll, EPOLL_CTL_ADD, socket_local, &event) == -1){
         printf("Error while adding local socket to epoll\n");
         exit(1);
     }
-
 }
 
 void close_sockets(){
